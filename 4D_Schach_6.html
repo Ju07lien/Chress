@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>4-Spieler Schach – PC & iPad</title>
+  <style>
+    body {
+      margin: 0;
+      background: #222;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+    canvas {
+      background: #ddd;
+      touch-action: none;
+    }
+  </style>
+</head>
+<body>
+<canvas id="board" width="800" height="800"></canvas>
+<script>
+// ==============================
+// 4-Spieler-Schach – spielbare Version
+// PC (Maus) & iPad (Touch)
+// Mit: Figuren, Zügen, Highlight, Schach-Anzeige, Promotion
+// (kein En Passant / Rochade / Umwandlung von Sonderfällen)
+// ==============================
+
+const canvas = document.getElementById("board");
+const ctx = canvas.getContext("2d");
+
+const TILE = 50;      // 16 x 50 = 800
+const SIZE = 16;      // 16x16 Gitter
+
+// Spielerreihenfolge
+const PLAYERS = ["Y", "B", "R", "G"]; // Gelb, Blau, Rot, Grün
+let currentPlayerIndex = 0;
+
+// Farben und Unicode-Figuren
+const COLORS = {
+  Y: "gold",
+  B: "dodgerblue",
+  R: "crimson",
+  G: "limegreen"
+};
+
+const UNICODE = {
+  K: "♔",
+  Q: "♕",
+  R: "♖",
+  B: "♗",
+  N: "♘",
+  P: "♙"
+};
+
+// Brettlöcher (Cross-Board)
+function isHole(x, y) {
+  return (x < 4 && y < 4) || (x > 11 && y < 4) || (x < 4 && y > 11) || (x > 11 && y > 11);
+}
+
+// Brett-Datenstruktur
+let board = [];
+for (let y = 0; y < SIZE; y++) {
+  board[y] = [];
+  for (let x = 0; x < SIZE; x++) {
+    board[y][x] = null;
+  }
+}
+
+// inCheck-Status für jeden Spieler
+let inCheck = { Y:false, B:false, R:false, G:false };
+
+function inside(x, y) {
+  return x >= 0 && y >= 0 && x < SIZE && y < SIZE && !isHole(x, y);
+}
+
+// Startpositionen setzen
+function setupPieces() {
+  const order = ["R", "N", "B", "Q", "K", "B", "N", "R"]; // 8 Figuren
+
+  // Gelb (oben, zieht nach unten)
+  let c = "Y";
+  let rowBack = 0;
+  let rowPawns = 1;
+  for (let i = 0; i < 8; i++) {
+    board[rowBack][4 + i] = { type: order[i], color: c, moved: false };
+    board[rowPawns][4 + i] = { type: "P", color: c, moved: false };
+  }
+
+  // Blau (links, zieht nach rechts)
+  c = "B";
+  let colBack = 0;
+  let colPawns = 1;
+  for (let i = 0; i < 8; i++) {
+    board[4 + i][colBack] = { type: order[i], color: c, moved: false };
+    board[4 + i][colPawns] = { type: "P", color: c, moved: false };
+  }
+
+  // Rot (unten, zieht nach oben)
+  c = "R";
+  rowBack = 15;
+  rowPawns = 14;
+  for (let i = 0; i < 8; i++) {
+    board[rowBack][4 + i] = { type: order[i], color: c, moved: false };
+    board[rowPawns][4 + i] = { type: "P", color: c, moved: false };
+  }
+
+  // Grün (rechts, zieht nach links)
+  c = "G";
+  colBack = 15;
+  colPawns = 14;
+  for (let i = 0; i < 8; i++) {
+    board[4 + i][colBack] = { type: order[i], color: c, moved: false };
+    board[4 + i][colPawns] = { type: "P", color: c, moved: false };
+  }
+}
+
+setupPieces();
+
+// ---------------------
+// Zeichnen
+// ---------------------
+
+function drawBoard() {
+  for (let y = 0; y < SIZE; y++) {
+    for (let x = 0; x < SIZE; x++) {
+      if (isHole(x, y)) continue;
+      ctx.fillStyle = (x + y) % 2 === 0 ? "#f0d9b5" : "#b58863";
+      ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+    }
+  }
+}
+
+function drawPieces() {
+  for (let y = 0; y < SIZE; y++) {
+    for (let x = 0; x < SIZE; x++) {
+      if (isHole(x, y)) continue;
+      const piece = board[y][x];
+      if (!piece) continue;
+      ctx.fillStyle = COLORS[piece.color];
+      ctx.font = "32px serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(UNICODE[piece.type], x * TILE + TILE / 2, y * TILE + TILE / 2);
+    }
+  }
+}
+
+let selected = null;      // {x,y}
+let legalMoves = [];      // [{x,y}]
+
+function drawHighlights() {
+  // Feld der ausgewählten Figur
+  if (selected) {
+    ctx.fillStyle = "rgba(255, 255, 0, 0.4)";
+    ctx.fillRect(selected.x * TILE, selected.y * TILE, TILE, TILE);
+
+    // Mögliche Züge
+    ctx.fillStyle = "rgba(0, 255, 0, 0.3)";
+    for (const m of legalMoves) {
+      ctx.fillRect(m.x * TILE, m.y * TILE, TILE, TILE);
+    }
+  }
+
+  // Schach-Markierung (König rot einfärben)
+  for (let y = 0; y < SIZE; y++) {
+    for (let x = 0; x < SIZE; x++) {
+      const piece = board[y][x];
+      if (!piece || piece.type !== "K") continue;
+      if (inCheck[piece.color]) {
+        ctx.fillStyle = "rgba(255, 0, 0, 0.4)";
+        ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+      }
+    }
+  }
+}
+
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawBoard();
+  drawHighlights();
+  drawPieces();
+}
+
+// ---------------------
+// Zuglogik
+// ---------------------
+
+function getKingPosition(color) {
+  for (let y = 0; y < SIZE; y++) {
+    for (let x = 0; x < SIZE; x++) {
+      const p = board[y][x];
+      if (p && p.color === color && p.type === "K") return { x, y };
+    }
+  }
+  return null;
+}
+
+function addSlideMoves(x, y, dx, dy, color, moves) {
+  let nx = x + dx;
+  let ny = y + dy;
+  while (inside(nx, ny)) {
+    const target = board[ny][nx];
+    if (target) {
+      if (target.color !== color) moves.push({ x: nx, y: ny });
+      break;
+    }
+    moves.push({ x: nx, y: ny });
+    nx += dx;
+    ny += dy;
+  }
+}
+
+// Pseudo-Züge (ignoriert eigenes Schach)
+function getPseudoMoves(x, y, forAttackOnly = false) {
+  const piece = board[y][x];
+  if (!piece) return [];
+  const { type, color } = piece;
+  const moves = [];
+
+  const knightDeltas = [
+    { dx: 1, dy: 2 }, { dx: 2, dy: 1 }, { dx: -1, dy: 2 }, { dx: -2, dy: 1 },
+    { dx: 1, dy: -2 }, { dx: 2, dy: -1 }, { dx: -1, dy: -2 }, { dx: -2, dy: -1 }
+  ];
+
+  if (type === "N") {
+    for (const d of knightDeltas) {
+      const nx = x + d.dx;
+      const ny = y + d.dy;
+      if (!inside(nx, ny)) continue;
+      const t = board[ny][nx];
+      if (!t || t.color !== color) moves.push({ x: nx, y: ny });
+    }
+    return moves;
+  }
+
+  if (type === "R" || type === "Q") {
+    addSlideMoves(x, y, 1, 0, color, moves);
+    addSlideMoves(x, y, -1, 0, color, moves);
+    addSlideMoves(x, y, 0, 1, color, moves);
+    addSlideMoves(x, y, 0, -1, color, moves);
+  }
+
+  if (type === "B" || type === "Q") {
+    addSlideMoves(x, y, 1, 1, color, moves);
+    addSlideMoves(x, y, -1, 1, color, moves);
+    addSlideMoves(x, y, 1, -1, color, moves);
+    addSlideMoves(x, y, -1, -1, color, moves);
+  }
+
+  if (type === "K") {
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = x + dx;
+        const ny = y + dy;
+        if (!inside(nx, ny)) continue;
+        const t = board[ny][nx];
+        if (!t || t.color !== color) moves.push({ x: nx, y: ny });
+      }
+    }
+    return moves;
+  }
+
+  if (type === "P") {
+    // Pawn-Richtung je nach Spieler
+    let dxForward = 0;
+    let dyForward = 0;
+    if (color === "Y") { dyForward = 1; }
+    if (color === "R") { dyForward = -1; }
+    if (color === "B") { dxForward = 1; }
+    if (color === "G") { dxForward = -1; }
+
+    // Vorwärtsbewegung (inkl. Doppelzug beim ersten Zug)
+    if (!forAttackOnly) {
+      const nx1 = x + dxForward;
+      const ny1 = y + dyForward;
+
+      if (inside(nx1, ny1) && !board[ny1][nx1]) {
+        moves.push({ x: nx1, y: ny1 });
+
+        // Doppelzug nur wenn Bauer noch nicht gezogen hat
+        const piece = board[y][x];
+        if (piece && !piece.moved) {
+          const nx2 = x + 2 * dxForward;
+          const ny2 = y + 2 * dyForward;
+          if (inside(nx2, ny2) && !board[ny2][nx2]) {
+            moves.push({ x: nx2, y: ny2 });
+          }
+        }
+      }
+    }
+
+    // Diagonale Schläge, abhängig von Richtung
+    const attackDeltas = [];
+    if (color === "Y" || color === "R") {
+      attackDeltas.push({ dx: -1, dy: dyForward });
+      attackDeltas.push({ dx: 1, dy: dyForward });
+    } else if (color === "B" || color === "G") {
+      attackDeltas.push({ dx: dxForward, dy: -1 });
+      attackDeltas.push({ dx: dxForward, dy: 1 });
+    }
+
+    for (const d of attackDeltas) {
+      const ax = x + d.dx;
+      const ay = y + d.dy;
+      if (!inside(ax, ay)) continue;
+      const t = board[ay][ax];
+      if (t && t.color !== color) moves.push({ x: ax, y: ay });
+    }
+  }
+
+  return moves;
+}
+
+function isKingInCheck(color) {
+  const kingPos = getKingPosition(color);
+  if (!kingPos) return false; // König wurde geschlagen
+
+  for (let y = 0; y < SIZE; y++) {
+    for (let x = 0; x < SIZE; x++) {
+      const p = board[y][x];
+      if (!p || p.color === color) continue;
+      const pseudo = getPseudoMoves(x, y, true);
+      for (const m of pseudo) {
+        if (m.x === kingPos.x && m.y === kingPos.y) return true;
+      }
+    }
+  }
+  return false;
+}
+
+// --- Promotion-Logik ---
+function isPromotionSquare(piece, to) {
+  if (piece.type !== "P") return false;
+  if (piece.color === "Y" && to.y === 15) return true; // gelb nach unten
+  if (piece.color === "R" && to.y === 0) return true;  // rot nach oben
+  if (piece.color === "B" && to.x === 15) return true; // blau nach rechts
+  if (piece.color === "G" && to.x === 0) return true;  // grün nach links
+  return false;
+}
+
+function handlePromotion(piece, to) {
+  if (!isPromotionSquare(piece, to)) return;
+  let choice = prompt("Bauer umwandeln in: Q,D,R,T,B,L,N? (Q=Queen/Dame, R=Turm, B=Läufer, N=Springer)", "Q");
+  if (!choice) choice = "Q";
+  choice = choice.toUpperCase();
+  // Akzeptiere deutsch/englisch Kürzel
+  if (choice === "D") choice = "Q";
+  if (choice === "T") choice = "R";
+  if (choice === "L") choice = "B";
+
+  if (!["Q","R","B","N"].includes(choice)) {
+    choice = "Q";
+  }
+  piece.type = choice;
+}
+
+// Move mit Simulations-Option
+function makeMove(from, to, options = { simulate: false }) {
+  const piece = board[from.y][from.x];
+  const target = board[to.y][to.x];
+
+  const prevType = piece ? piece.type : null;
+  const prevMoved = piece ? piece.moved : null;
+
+  board[to.y][to.x] = piece;
+  board[from.y][from.x] = null;
+
+  if (!options.simulate && piece) {
+    piece.moved = true;
+    // Nur in echten Zügen (nicht bei Simulation) promoten
+    handlePromotion(piece, to);
+  }
+
+  return {
+    from,
+    to,
+    piece,
+    captured: target,
+    prevType,
+    prevMoved
+  };
+}
+
+function undoMove(move) {
+  board[move.from.y][move.from.x] = move.piece;
+  board[move.to.y][move.to.x] = move.captured;
+  if (move.piece) {
+    move.piece.type = move.prevType;
+    move.piece.moved = move.prevMoved;
+  }
+}
+
+function getLegalMoves(x, y) {
+  const piece = board[y][x];
+  if (!piece) return [];
+  const color = piece.color;
+  const pseudo = getPseudoMoves(x, y, false);
+  const legal = [];
+
+  for (const m of pseudo) {
+    const mv = makeMove({ x, y }, { x: m.x, y: m.y }, { simulate: true });
+    const check = isKingInCheck(color);
+    undoMove(mv);
+    if (!check) legal.push(m);
+  }
+
+  return legal;
+}
+
+function updateCheckStatus() {
+  for (const c of PLAYERS) {
+    inCheck[c] = isKingInCheck(c);
+  }
+}
+
+// ---------------------
+// Eingabe (PC & iPad)
+// ---------------------
+
+function handleInput(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  const x = Math.floor((clientX - rect.left) / TILE);
+  const y = Math.floor((clientY - rect.top) / TILE);
+  if (!inside(x, y)) return;
+
+  const currentColor = PLAYERS[currentPlayerIndex];
+  const clickedPiece = board[y][x];
+
+  // Zug ausführen, wenn ein Feld aus legalMoves gewählt wird
+  if (selected) {
+    for (const m of legalMoves) {
+      if (m.x === x && m.y === y) {
+        makeMove({ x: selected.x, y: selected.y }, { x, y }, { simulate: false });
+        selected = null;
+        legalMoves = [];
+        currentPlayerIndex = (currentPlayerIndex + 1) % PLAYERS.length;
+        updateCheckStatus();
+        render();
+        return;
+      }
+    }
+  }
+
+  // Neue Auswahl treffen
+  if (clickedPiece && clickedPiece.color === currentColor) {
+    selected = { x, y };
+    legalMoves = getLegalMoves(x, y);
+  } else {
+    selected = null;
+    legalMoves = [];
+  }
+
+  render();
+}
+
+canvas.addEventListener("mousedown", (e) => {
+  e.preventDefault();
+  handleInput(e.clientX, e.clientY);
+});
+
+canvas.addEventListener("touchstart", (e) => {
+  e.preventDefault();
+  const t = e.touches[0];
+  handleInput(t.clientX, t.clientY);
+});
+
+updateCheckStatus();
+render();
+</script>
+</body>
+</html>
