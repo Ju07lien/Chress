@@ -1,476 +1,291 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>4-Spieler Schach – PC & iPad</title>
-  <style>
-    body {
-      margin: 0;
-      background: #222;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
-    }
-    canvas {
-      background: #ddd;
-      touch-action: none;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Molecular Mayhem</title>
+    <style>
+        body { margin: 0; background: #222; color: #fff; font-family: Arial, sans-serif; }
+        canvas { display: block; margin: 0 auto; border: 1px solid #fff; }
+        #menu { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); padding: 10px; }
+        #builder { display: none; position: absolute; top: 50px; left: 10px; background: rgba(0,0,0,0.7); padding: 10px; }
+        button { margin: 5px; padding: 5px 10px; background: #444; color: #fff; border: 1px solid #666; cursor: pointer; }
+        button:hover { background: #666; }
+    </style>
 </head>
 <body>
-<canvas id="board" width="800" height="800"></canvas>
-<script>
-// ==============================
-// 4-Spieler-Schach – spielbare Version
-// PC (Maus) & iPad (Touch)
-// Mit: Figuren, Zügen, Highlight, Schach-Anzeige, Promotion
-// (kein En Passant / Rochade / Umwandlung von Sonderfällen)
-// ==============================
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <div id="menu">
+        <button id="startBuild">Build Molecule</button>
+        <button id="startShoot">Start Shooting</button>
+        <div id="status">Score: 0 | Health: 100</div>
+    </div>
+    <div id="builder">
+        <h3>Select Drug Type</h3>
+        <button data-drug="cannabis">Cannabis (Slow)</button>
+        <button data-drug="cocaine">Cocaine (Medium)</button>
+        <button data-drug="meth">Meth (Fast)</button>
+        <button data-drug="heroin">Heroin (Very Fast)</button>
+        <button data-drug="lsd">LSD (Special)</button>
+        <button id="confirmBuild">Confirm</button>
+    </div>
+    <script>
+        // Game Configuration
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const WIDTH = canvas.width;
+        const HEIGHT = canvas.height;
 
-const canvas = document.getElementById("board");
-const ctx = canvas.getContext("2d");
+        // Predefined Drugs with SMILES (for rendering) and potency
+        const drugs = {
+            cannabis: { smiles: 'CC1CCC2C(C)(C)OC3=CC(CCCCC)=CC(O)=C3C21', potency: 5, color: 'green' }, // Simplified SMILES for THC
+            cocaine: { smiles: 'CN1C2CCC1C(C(OC)=O)C(OC(C3=CC=CC=C3)=O)C2', potency: 3, color: 'white' },
+            meth: { smiles: 'CC(N)Cc1ccccc1', potency: 2, color: 'blue' },
+            heroin: { smiles: 'CC(OC1=C(Oc2cc(CN3CC4)C=CC(O)=C2C3CC5CCC(O)C4C5)C=CC=C1)C', potency: 1, color: 'brown' },
+            lsd: { smiles: 'CCN(CC)C(=O)C1CN(C)C2Cc3c[nH]c4ccccc3c2c5c1cccc5', potency: 3, color: 'purple' } // Special effect
+        };
 
-const TILE = 50;      // 16 x 50 = 800
-const SIZE = 16;      // 16x16 Gitter
-
-// Spielerreihenfolge
-const PLAYERS = ["Y", "B", "R", "G"]; // Gelb, Blau, Rot, Grün
-let currentPlayerIndex = 0;
-
-// Farben und Unicode-Figuren
-const COLORS = {
-  Y: "gold",
-  B: "dodgerblue",
-  R: "crimson",
-  G: "limegreen"
-};
-
-const UNICODE = {
-  K: "♔",
-  Q: "♕",
-  R: "♖",
-  B: "♗",
-  N: "♘",
-  P: "♙"
-};
-
-// Brettlöcher (Cross-Board)
-function isHole(x, y) {
-  return (x < 4 && y < 4) || (x > 11 && y < 4) || (x < 4 && y > 11) || (x > 11 && y > 11);
-}
-
-// Brett-Datenstruktur
-let board = [];
-for (let y = 0; y < SIZE; y++) {
-  board[y] = [];
-  for (let x = 0; x < SIZE; x++) {
-    board[y][x] = null;
-  }
-}
-
-// inCheck-Status für jeden Spieler
-let inCheck = { Y:false, B:false, R:false, G:false };
-
-function inside(x, y) {
-  return x >= 0 && y >= 0 && x < SIZE && y < SIZE && !isHole(x, y);
-}
-
-// Startpositionen setzen
-function setupPieces() {
-  const order = ["R", "N", "B", "Q", "K", "B", "N", "R"]; // 8 Figuren
-
-  // Gelb (oben, zieht nach unten)
-  let c = "Y";
-  let rowBack = 0;
-  let rowPawns = 1;
-  for (let i = 0; i < 8; i++) {
-    board[rowBack][4 + i] = { type: order[i], color: c, moved: false };
-    board[rowPawns][4 + i] = { type: "P", color: c, moved: false };
-  }
-
-  // Blau (links, zieht nach rechts)
-  c = "B";
-  let colBack = 0;
-  let colPawns = 1;
-  for (let i = 0; i < 8; i++) {
-    board[4 + i][colBack] = { type: order[i], color: c, moved: false };
-    board[4 + i][colPawns] = { type: "P", color: c, moved: false };
-  }
-
-  // Rot (unten, zieht nach oben)
-  c = "R";
-  rowBack = 15;
-  rowPawns = 14;
-  for (let i = 0; i < 8; i++) {
-    board[rowBack][4 + i] = { type: order[i], color: c, moved: false };
-    board[rowPawns][4 + i] = { type: "P", color: c, moved: false };
-  }
-
-  // Grün (rechts, zieht nach links)
-  c = "G";
-  colBack = 15;
-  colPawns = 14;
-  for (let i = 0; i < 8; i++) {
-    board[4 + i][colBack] = { type: order[i], color: c, moved: false };
-    board[4 + i][colPawns] = { type: "P", color: c, moved: false };
-  }
-}
-
-setupPieces();
-
-// ---------------------
-// Zeichnen
-// ---------------------
-
-function drawBoard() {
-  for (let y = 0; y < SIZE; y++) {
-    for (let x = 0; x < SIZE; x++) {
-      if (isHole(x, y)) continue;
-      ctx.fillStyle = (x + y) % 2 === 0 ? "#f0d9b5" : "#b58863";
-      ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
-    }
-  }
-}
-
-function drawPieces() {
-  for (let y = 0; y < SIZE; y++) {
-    for (let x = 0; x < SIZE; x++) {
-      if (isHole(x, y)) continue;
-      const piece = board[y][x];
-      if (!piece) continue;
-      ctx.fillStyle = COLORS[piece.color];
-      ctx.font = "32px serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(UNICODE[piece.type], x * TILE + TILE / 2, y * TILE + TILE / 2);
-    }
-  }
-}
-
-let selected = null;      // {x,y}
-let legalMoves = [];      // [{x,y}]
-
-function drawHighlights() {
-  // Feld der ausgewählten Figur
-  if (selected) {
-    ctx.fillStyle = "rgba(255, 255, 0, 0.4)";
-    ctx.fillRect(selected.x * TILE, selected.y * TILE, TILE, TILE);
-
-    // Mögliche Züge
-    ctx.fillStyle = "rgba(0, 255, 0, 0.3)";
-    for (const m of legalMoves) {
-      ctx.fillRect(m.x * TILE, m.y * TILE, TILE, TILE);
-    }
-  }
-
-  // Schach-Markierung (König rot einfärben)
-  for (let y = 0; y < SIZE; y++) {
-    for (let x = 0; x < SIZE; x++) {
-      const piece = board[y][x];
-      if (!piece || piece.type !== "K") continue;
-      if (inCheck[piece.color]) {
-        ctx.fillStyle = "rgba(255, 0, 0, 0.4)";
-        ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
-      }
-    }
-  }
-}
-
-function render() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  drawBoard();
-  drawHighlights();
-  drawPieces();
-}
-
-// ---------------------
-// Zuglogik
-// ---------------------
-
-function getKingPosition(color) {
-  for (let y = 0; y < SIZE; y++) {
-    for (let x = 0; x < SIZE; x++) {
-      const p = board[y][x];
-      if (p && p.color === color && p.type === "K") return { x, y };
-    }
-  }
-  return null;
-}
-
-function addSlideMoves(x, y, dx, dy, color, moves) {
-  let nx = x + dx;
-  let ny = y + dy;
-  while (inside(nx, ny)) {
-    const target = board[ny][nx];
-    if (target) {
-      if (target.color !== color) moves.push({ x: nx, y: ny });
-      break;
-    }
-    moves.push({ x: nx, y: ny });
-    nx += dx;
-    ny += dy;
-  }
-}
-
-// Pseudo-Züge (ignoriert eigenes Schach)
-function getPseudoMoves(x, y, forAttackOnly = false) {
-  const piece = board[y][x];
-  if (!piece) return [];
-  const { type, color } = piece;
-  const moves = [];
-
-  const knightDeltas = [
-    { dx: 1, dy: 2 }, { dx: 2, dy: 1 }, { dx: -1, dy: 2 }, { dx: -2, dy: 1 },
-    { dx: 1, dy: -2 }, { dx: 2, dy: -1 }, { dx: -1, dy: -2 }, { dx: -2, dy: -1 }
-  ];
-
-  if (type === "N") {
-    for (const d of knightDeltas) {
-      const nx = x + d.dx;
-      const ny = y + d.dy;
-      if (!inside(nx, ny)) continue;
-      const t = board[ny][nx];
-      if (!t || t.color !== color) moves.push({ x: nx, y: ny });
-    }
-    return moves;
-  }
-
-  if (type === "R" || type === "Q") {
-    addSlideMoves(x, y, 1, 0, color, moves);
-    addSlideMoves(x, y, -1, 0, color, moves);
-    addSlideMoves(x, y, 0, 1, color, moves);
-    addSlideMoves(x, y, 0, -1, color, moves);
-  }
-
-  if (type === "B" || type === "Q") {
-    addSlideMoves(x, y, 1, 1, color, moves);
-    addSlideMoves(x, y, -1, 1, color, moves);
-    addSlideMoves(x, y, 1, -1, color, moves);
-    addSlideMoves(x, y, -1, -1, color, moves);
-  }
-
-  if (type === "K") {
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dy = -1; dy <= 1; dy++) {
-        if (dx === 0 && dy === 0) continue;
-        const nx = x + dx;
-        const ny = y + dy;
-        if (!inside(nx, ny)) continue;
-        const t = board[ny][nx];
-        if (!t || t.color !== color) moves.push({ x: nx, y: ny });
-      }
-    }
-    return moves;
-  }
-
-  if (type === "P") {
-    // Pawn-Richtung je nach Spieler
-    let dxForward = 0;
-    let dyForward = 0;
-    if (color === "Y") { dyForward = 1; }
-    if (color === "R") { dyForward = -1; }
-    if (color === "B") { dxForward = 1; }
-    if (color === "G") { dxForward = -1; }
-
-    // Vorwärtsbewegung (inkl. Doppelzug beim ersten Zug)
-    if (!forAttackOnly) {
-      const nx1 = x + dxForward;
-      const ny1 = y + dyForward;
-
-      if (inside(nx1, ny1) && !board[ny1][nx1]) {
-        moves.push({ x: nx1, y: ny1 });
-
-        // Doppelzug nur wenn Bauer noch nicht gezogen hat
-        const piece = board[y][x];
-        if (piece && !piece.moved) {
-          const nx2 = x + 2 * dxForward;
-          const ny2 = y + 2 * dyForward;
-          if (inside(nx2, ny2) && !board[ny2][nx2]) {
-            moves.push({ x: nx2, y: ny2 });
-          }
+        // Simple Molecule Renderer (placeholder - draws basic shapes; in real use, integrate SmilesDrawer or similar JS lib)
+        // For demo, we draw placeholders; to make real, add <script src="https://unpkg.com/smiles-drawer@2.0.1/dist/smiles-drawer.min.js"></script>
+        // Then use: let drawer = new SmilesDrawer.Drawer({width: 50, height: 50}); drawer.draw(smiles, canvasContext);
+        function drawMolecule(ctx, x, y, drugType, rotation = 0) {
+            const drug = drugs[drugType];
+            ctx.save();
+            ctx.translate(x + 25, y + 25);
+            ctx.rotate(rotation * Math.PI / 180);
+            ctx.translate(-25, -25);
+            ctx.fillStyle = drug.color;
+            ctx.beginPath();
+            ctx.arc(25, 25, 20, 0, 2 * Math.PI); // Placeholder circle
+            ctx.fill();
+            ctx.fillStyle = '#000';
+            ctx.font = '12px Arial';
+            ctx.fillText(drugType[0].toUpperCase(), 20, 30); // Initial letter
+            ctx.restore();
         }
-      }
-    }
 
-    // Diagonale Schläge, abhängig von Richtung
-    const attackDeltas = [];
-    if (color === "Y" || color === "R") {
-      attackDeltas.push({ dx: -1, dy: dyForward });
-      attackDeltas.push({ dx: 1, dy: dyForward });
-    } else if (color === "B" || color === "G") {
-      attackDeltas.push({ dx: dxForward, dy: -1 });
-      attackDeltas.push({ dx: dxForward, dy: 1 });
-    }
+        // Game State
+        let gameState = 'menu'; // menu, building, shooting
+        let selectedDrug = null;
+        let player = { x: 50, y: HEIGHT / 2, health: 100, speed: 5 };
+        let projectiles = [];
+        let enemies = [];
+        let score = 0;
+        let level = 1;
 
-    for (const d of attackDeltas) {
-      const ax = x + d.dx;
-      const ay = y + d.dy;
-      if (!inside(ax, ay)) continue;
-      const t = board[ay][ax];
-      if (t && t.color !== color) moves.push({ x: ax, y: ay });
-    }
-  }
+        // Controls
+        let keys = {};
+        window.addEventListener('keydown', e => keys[e.key] = true);
+        window.addEventListener('keyup', e => keys[e.key] = false);
+        canvas.addEventListener('click', shootProjectile);
 
-  return moves;
-}
+        // UI Elements
+        const startBuildBtn = document.getElementById('startBuild');
+        const startShootBtn = document.getElementById('startShoot');
+        const builderDiv = document.getElementById('builder');
+        const statusDiv = document.getElementById('status');
+        const confirmBuildBtn = document.getElementById('confirmBuild');
 
-function isKingInCheck(color) {
-  const kingPos = getKingPosition(color);
-  if (!kingPos) return false; // König wurde geschlagen
+        startBuildBtn.addEventListener('click', () => {
+            gameState = 'building';
+            builderDiv.style.display = 'block';
+        });
 
-  for (let y = 0; y < SIZE; y++) {
-    for (let x = 0; x < SIZE; x++) {
-      const p = board[y][x];
-      if (!p || p.color === color) continue;
-      const pseudo = getPseudoMoves(x, y, true);
-      for (const m of pseudo) {
-        if (m.x === kingPos.x && m.y === kingPos.y) return true;
-      }
-    }
-  }
-  return false;
-}
+        builderDiv.querySelectorAll('button[data-drug]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                selectedDrug = btn.dataset.drug;
+                builderDiv.querySelectorAll('button[data-drug]').forEach(b => b.style.background = '#444');
+                btn.style.background = '#888';
+            });
+        });
 
-// --- Promotion-Logik ---
-function isPromotionSquare(piece, to) {
-  if (piece.type !== "P") return false;
-  if (piece.color === "Y" && to.y === 15) return true; // gelb nach unten
-  if (piece.color === "R" && to.y === 0) return true;  // rot nach oben
-  if (piece.color === "B" && to.x === 15) return true; // blau nach rechts
-  if (piece.color === "G" && to.x === 0) return true;  // grün nach links
-  return false;
-}
+        confirmBuildBtn.addEventListener('click', () => {
+            if (selectedDrug) {
+                builderDiv.style.display = 'none';
+                gameState = 'menu';
+                alert(`Molecule built: ${selectedDrug}`);
+            }
+        });
 
-function handlePromotion(piece, to) {
-  if (!isPromotionSquare(piece, to)) return;
-  let choice = prompt("Bauer umwandeln in: Q,D,R,T,B,L,N? (Q=Queen/Dame, R=Turm, B=Läufer, N=Springer)", "Q");
-  if (!choice) choice = "Q";
-  choice = choice.toUpperCase();
-  // Akzeptiere deutsch/englisch Kürzel
-  if (choice === "D") choice = "Q";
-  if (choice === "T") choice = "R";
-  if (choice === "L") choice = "B";
+        startShootBtn.addEventListener('click', () => {
+            if (selectedDrug) {
+                gameState = 'shooting';
+                spawnEnemies();
+            } else {
+                alert('Build a molecule first!');
+            }
+        });
 
-  if (!["Q","R","B","N"].includes(choice)) {
-    choice = "Q";
-  }
-  piece.type = choice;
-}
+        // Projectile Class
+        class Projectile {
+            constructor(x, y, drugType) {
+                this.x = x;
+                this.y = y;
+                this.speed = 10;
+                this.drugType = drugType;
+                this.rotation = 0;
+            }
+            update() {
+                this.x += this.speed;
+                this.rotation += 5;
+            }
+            draw() {
+                drawMolecule(ctx, this.x, this.y, this.drugType, this.rotation);
+            }
+        }
 
-// Move mit Simulations-Option
-function makeMove(from, to, options = { simulate: false }) {
-  const piece = board[from.y][from.x];
-  const target = board[to.y][to.x];
+        // Enemy Class
+        class Enemy {
+            constructor() {
+                this.x = WIDTH - 50;
+                this.y = Math.random() * (HEIGHT - 50) + 25;
+                this.speed = 2 + level;
+                this.stage = 0; // 0: normal, 1: high, 2: psycho, 3: overdose, 4: dead
+                this.hits = 0;
+                this.drugType = null;
+                this.timer = 0;
+            }
+            update() {
+                if (this.stage === 4) return;
+                this.x -= this.speed;
 
-  const prevType = piece ? piece.type : null;
-  const prevMoved = piece ? piece.moved : null;
+                switch (this.stage) {
+                    case 1: // High: slow
+                        this.speed = (2 + level) * 0.5;
+                        break;
+                    case 2: // Psycho: erratic
+                        this.y += Math.sin(Date.now() / 100) * 2;
+                        this.speed = (2 + level) * 1.5;
+                        // Shoot back weakly (placeholder)
+                        if (Math.random() < 0.01) {
+                            // Simulate enemy shot hitting player
+                            player.health -= 1;
+                        }
+                        break;
+                    case 3: // Overdose: freeze
+                        this.speed = 0;
+                        this.timer++;
+                        if (this.timer > 300) this.stage = 4; // 5 seconds at 60fps
+                        break;
+                }
 
-  board[to.y][to.x] = piece;
-  board[from.y][from.x] = null;
+                if (this.x < 0) {
+                    player.health -= 10;
+                    this.stage = 4;
+                }
+            }
+            draw() {
+                if (this.stage === 4) return;
+                ctx.fillStyle = '#f00';
+                ctx.fillRect(this.x, this.y, 30, 30);
+                let label = '';
+                switch (this.stage) {
+                    case 1: label = 'HIGH'; break;
+                    case 2: label = 'PSYCHO'; break;
+                    case 3: label = 'OVERDOSE'; break;
+                }
+                if (label) {
+                    ctx.fillStyle = '#fff';
+                    ctx.font = '12px Arial';
+                    ctx.fillText(label, this.x, this.y - 5);
+                }
+            }
+            hit(drugType) {
+                if (this.drugType && this.drugType !== drugType) return; // Simple: same drug only
+                this.drugType = drugType;
+                const potency = drugs[drugType].potency;
+                this.hits++;
+                if (this.hits >= potency) {
+                    this.stage = Math.min(this.stage + 1, 4);
+                    this.hits = 0;
+                    if (this.stage === 4) score += 10;
+                } else {
+                    this.stage = Math.min(this.stage + 1, 3);
+                }
+                if (drugType === 'lsd' && this.stage === 2) {
+                    // Special: more erratic
+                    this.speed *= 1.2;
+                }
+            }
+        }
 
-  if (!options.simulate && piece) {
-    piece.moved = true;
-    // Nur in echten Zügen (nicht bei Simulation) promoten
-    handlePromotion(piece, to);
-  }
+        function shootProjectile(e) {
+            if (gameState !== 'shooting') return;
+            const rect = canvas.getBoundingClientRect();
+            const mouseY = e.clientY - rect.top;
+            projectiles.push(new Projectile(player.x + 30, player.y, selectedDrug));
+        }
 
-  return {
-    from,
-    to,
-    piece,
-    captured: target,
-    prevType,
-    prevMoved
-  };
-}
+        function spawnEnemies() {
+            enemies = [];
+            for (let i = 0; i < 5 + level * 2; i++) {
+                enemies.push(new Enemy());
+            }
+        }
 
-function undoMove(move) {
-  board[move.from.y][move.from.x] = move.piece;
-  board[move.to.y][move.to.x] = move.captured;
-  if (move.piece) {
-    move.piece.type = move.prevType;
-    move.piece.moved = move.prevMoved;
-  }
-}
+        function updatePlayer() {
+            if (keys['ArrowUp'] || keys['w']) player.y -= player.speed;
+            if (keys['ArrowDown'] || keys['s']) player.y += player.speed;
+            if (keys['ArrowLeft'] || keys['a']) player.x -= player.speed;
+            if (keys['ArrowRight'] || keys['d']) player.x += player.speed;
+            player.x = Math.max(0, Math.min(WIDTH - 30, player.x));
+            player.y = Math.max(0, Math.min(HEIGHT - 30, player.y));
+        }
 
-function getLegalMoves(x, y) {
-  const piece = board[y][x];
-  if (!piece) return [];
-  const color = piece.color;
-  const pseudo = getPseudoMoves(x, y, false);
-  const legal = [];
+        function checkCollisions() {
+            projectiles.forEach((p, pi) => {
+                enemies.forEach((e, ei) => {
+                    if (e.stage === 4) return;
+                    if (p.x + 25 > e.x && p.x < e.x + 30 && p.y + 25 > e.y && p.y < e.y + 30) {
+                        e.hit(p.drugType);
+                        projectiles.splice(pi, 1);
+                    }
+                });
+                if (p.x > WIDTH) projectiles.splice(pi, 1);
+            });
+        }
 
-  for (const m of pseudo) {
-    const mv = makeMove({ x, y }, { x: m.x, y: m.y }, { simulate: true });
-    const check = isKingInCheck(color);
-    undoMove(mv);
-    if (!check) legal.push(m);
-  }
+        function gameLoop() {
+            ctx.clearRect(0, 0, WIDTH, HEIGHT);
+            // Draw Background
+            ctx.fillStyle = '#333';
+            ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-  return legal;
-}
+            if (gameState === 'shooting') {
+                updatePlayer();
+                ctx.fillStyle = '#0f0';
+                ctx.fillRect(player.x, player.y, 30, 30);
 
-function updateCheckStatus() {
-  for (const c of PLAYERS) {
-    inCheck[c] = isKingInCheck(c);
-  }
-}
+                projectiles.forEach(p => { p.update(); p.draw(); });
+                enemies.forEach(e => { e.update(); e.draw(); });
 
-// ---------------------
-// Eingabe (PC & iPad)
-// ---------------------
+                checkCollisions();
 
-function handleInput(clientX, clientY) {
-  const rect = canvas.getBoundingClientRect();
-  const x = Math.floor((clientX - rect.left) / TILE);
-  const y = Math.floor((clientY - rect.top) / TILE);
-  if (!inside(x, y)) return;
+                enemies = enemies.filter(e => e.stage !== 4);
+                if (enemies.length === 0) {
+                    level++;
+                    spawnEnemies();
+                }
 
-  const currentColor = PLAYERS[currentPlayerIndex];
-  const clickedPiece = board[y][x];
+                if (player.health <= 0) {
+                    gameState = 'menu';
+                    alert('Game Over! Score: ' + score);
+                    score = 0;
+                    player.health = 100;
+                    level = 1;
+                }
 
-  // Zug ausführen, wenn ein Feld aus legalMoves gewählt wird
-  if (selected) {
-    for (const m of legalMoves) {
-      if (m.x === x && m.y === y) {
-        makeMove({ x: selected.x, y: selected.y }, { x, y }, { simulate: false });
-        selected = null;
-        legalMoves = [];
-        currentPlayerIndex = (currentPlayerIndex + 1) % PLAYERS.length;
-        updateCheckStatus();
-        render();
-        return;
-      }
-    }
-  }
+                statusDiv.textContent = `Score: ${score} | Health: ${player.health} | Level: ${level}`;
+            } else {
+                ctx.font = '30px Arial';
+                ctx.fillStyle = '#fff';
+                ctx.fillText('Molecular Mayhem', WIDTH / 2 - 150, HEIGHT / 2);
+            }
 
-  // Neue Auswahl treffen
-  if (clickedPiece && clickedPiece.color === currentColor) {
-    selected = { x, y };
-    legalMoves = getLegalMoves(x, y);
-  } else {
-    selected = null;
-    legalMoves = [];
-  }
+            requestAnimationFrame(gameLoop);
+        }
 
-  render();
-}
-
-canvas.addEventListener("mousedown", (e) => {
-  e.preventDefault();
-  handleInput(e.clientX, e.clientY);
-});
-
-canvas.addEventListener("touchstart", (e) => {
-  e.preventDefault();
-  const t = e.touches[0];
-  handleInput(t.clientX, t.clientY);
-});
-
-updateCheckStatus();
-render();
-</script>
+        gameLoop();
+    </script>
 </body>
 </html>
